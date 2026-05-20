@@ -183,9 +183,15 @@ btc_change = (btc_now - btc_at_close) / btc_at_close
 raw_implied = last_price * (1.0 + LEVERAGE * btc_change)
 
 if BROKER_PRICE and BROKER_PRICE > 0 and raw_implied > 0:
-    factor = float(BROKER_PRICE) / raw_implied
+    if state.get("anchor_price") != BROKER_PRICE or state.get("anchor_factor") is None:
+        factor = float(BROKER_PRICE) / raw_implied
+        state["anchor_price"] = BROKER_PRICE
+        state["anchor_factor"] = factor
+        save_state(state)
+    else:
+        factor = state["anchor_factor"]
     samples = -1
-    factor_source = f"manual anchor → ${BROKER_PRICE:,.4f}"
+    factor_source = f"anchor → ${BROKER_PRICE:,.4f} (frozen factor, BTC tracked)"
 else:
     factor = state.get("factor", 1.0)
     samples = state.get("samples", 0)
