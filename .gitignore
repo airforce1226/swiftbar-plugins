@@ -1,0 +1,4 @@
+.btcz-state.json
+.btc-alert-state.json
+*.local.sh
+.DS_Store
