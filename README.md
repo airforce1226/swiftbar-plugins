@@ -53,6 +53,17 @@ BROKER_PRICE = 4.040   # broker 가 보여주는 BTCZ 가격
 - `BROKER_PRICE` 값을 다른 숫자로 바꾸면 anchor 가 그 시점에 다시 계산됩니다.
 - `None` 으로 두면 EMA 자동 학습 모드 (며칠 누적되면 정확해짐, `✓` 표시).
 
+#### Timeline 알림 (선택)
+시간 기반 손절/익절 자동 알림 (macOS 시스템 notification):
+```python
+START_DATE = "2026-05-20"  # 매수일 YYYY-MM-DD. None 이면 첫 실행일 자동 기록.
+STOP_DAYS = 30             # 손절 임계 (일수)
+PROFIT_DAYS = 60           # 익절 임계 (일수)
+```
+- 매수 후 `STOP_DAYS` 경과 시 1회 알림 (소리: Submarine)
+- 매수 후 `PROFIT_DAYS` 경과 시 1회 알림 (소리: Hero)
+- 드롭다운 Timeline 섹션에 D+n / 손절선/익절선 남은 일수 표시 (포지션 설정 시)
+
 ## 요구사항
 
 - macOS

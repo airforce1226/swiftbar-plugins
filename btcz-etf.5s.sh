@@ -18,6 +18,7 @@
 /usr/bin/python3 <<'PYEOF'
 import json
 import os
+import subprocess
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -30,6 +31,10 @@ AVG_COST = 0.0     # USD, 본인 평균단가 (예: 3.9357)
 SHARES = 0         # 보유 수량 (예: 3285)
 BUY_FX = 0.0       # 매입 시점 USD/KRW (예: 1491.88)
 BROKER_PRICE = None  # broker 가격 (예: 4.040). None 이면 EMA 학습 사용.
+
+START_DATE = None     # "YYYY-MM-DD" 매수일. None 이면 첫 실행일 자동 기록.
+STOP_DAYS = 30        # 손절 알림 임계 (일수)
+PROFIT_DAYS = 60      # 익절 알림 임계 (일수)
 
 HAS_POSITION = AVG_COST > 0 and SHARES > 0 and BUY_FX > 0
 COST_USD = AVG_COST * SHARES if HAS_POSITION else 0.0
@@ -113,6 +118,13 @@ def fmt_krw(v):
     return f"{sign}₩{abs(v):,.0f}"
 
 
+def notify(title, msg, sound="Sosumi"):
+    safe = msg.replace('"', '\\"')
+    safe_title = title.replace('"', '\\"')
+    script = f'display notification "{safe}" with title "{safe_title}" sound name "{sound}"'
+    subprocess.run(["osascript", "-e", script], check=False)
+
+
 try:
     btcz = fetch("https://query1.finance.yahoo.com/v8/finance/chart/BTCZ?interval=1d&range=2d")
     meta = btcz["chart"]["result"][0]["meta"]
@@ -179,6 +191,53 @@ if today_iso not in existing_dates:
 
     save_state(state)
 
+today_local = datetime.now().date()
+if START_DATE:
+    try:
+        start_date = datetime.strptime(START_DATE, "%Y-%m-%d").date()
+    except Exception:
+        start_date = None
+else:
+    saved = state.get("start_date")
+    if saved:
+        try:
+            start_date = datetime.strptime(saved, "%Y-%m-%d").date()
+        except Exception:
+            start_date = today_local
+            state["start_date"] = start_date.isoformat()
+            save_state(state)
+    else:
+        start_date = today_local
+        state["start_date"] = start_date.isoformat()
+        save_state(state)
+
+if start_date and HAS_POSITION:
+    days_held = (today_local - start_date).days
+    stop_remaining = STOP_DAYS - days_held
+    profit_remaining = PROFIT_DAYS - days_held
+
+    if days_held >= STOP_DAYS and not state.get("stop_alert_fired"):
+        notify(
+            "BTCZ 손절선 도달",
+            f"매수 후 {days_held}일 경과 (≥ {STOP_DAYS}일). 청산 검토 권장.",
+            "Submarine",
+        )
+        state["stop_alert_fired"] = True
+        save_state(state)
+
+    if days_held >= PROFIT_DAYS and not state.get("profit_alert_fired"):
+        notify(
+            "BTCZ 익절선 도달",
+            f"매수 후 {days_held}일 경과 (≥ {PROFIT_DAYS}일). 청산 권장.",
+            "Hero",
+        )
+        state["profit_alert_fired"] = True
+        save_state(state)
+else:
+    days_held = None
+    stop_remaining = None
+    profit_remaining = None
+
 btc_change = (btc_now - btc_at_close) / btc_at_close
 raw_implied = last_price * (1.0 + LEVERAGE * btc_change)
 
@@ -242,6 +301,23 @@ if HAS_POSITION:
     sign_usd = "+" if pl_usd >= 0 else ""
     print(f"P/L (USD):   {sign_usd}${pl_usd:,.2f}  ({sign_usd}{pl_pct_usd:.2f}%)")
     print("---")
+    if start_date:
+        print("Timeline")
+        print(f"매수일:    {start_date.isoformat()}")
+        print(f"경과:      D+{days_held}")
+        if stop_remaining > 0:
+            print(f"손절선:    D+{STOP_DAYS} ({stop_remaining}일 남음)")
+        elif stop_remaining == 0:
+            print(f"손절선:    ⚠️ 오늘 도달")
+        else:
+            print(f"손절선:    ⚠️ {-stop_remaining}일 초과 — 청산 검토")
+        if profit_remaining > 0:
+            print(f"익절선:    D+{PROFIT_DAYS} ({profit_remaining}일 남음)")
+        elif profit_remaining == 0:
+            print(f"익절선:    🟡 오늘 도달")
+        else:
+            print(f"익절선:    🟡 {-profit_remaining}일 초과 — 청산 권장")
+        print("---")
     if fx:
         print(f"USD/KRW now:  ₩{fx:,.2f}")
         print(f"USD/KRW buy:  ₩{BUY_FX:,.2f}")
