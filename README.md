@@ -5,6 +5,17 @@ BTCZ ETF(T-Rex 2X Inverse Bitcoin Daily Target) 장중 추정가를 표시합니
 
 ## 플러그인
 
+### `fear-greed.15m.sh`
+- alternative.me Crypto Fear & Greed Index (사실상 BTC 중심)
+- 메뉴바: 현재 값 + 분류 + ↑/↓ 화살표
+- 드롭다운: 최근 14일 히트맵 (텍스트 바차트)
+- 색상: Extreme Fear → 초록 (contrarian buy 신호), Extreme Greed → 빨강
+
+예시:
+```
+F&G 27 Fear ↑
+```
+
 ### `btc-price.5s.sh`
 - Coinbase spot price 실시간 표시
 - 24h 변동률 + 색상 (상승 초록 `#16c784` / 하락 빨강 `#ea3943`)
