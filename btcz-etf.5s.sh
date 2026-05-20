@@ -1,21 +1,25 @@
 #!/bin/bash
 # <swiftbar.title>BTCZ ETF (implied)</swiftbar.title>
-# <swiftbar.version>v1.0</swiftbar.version>
+# <swiftbar.version>v1.1</swiftbar.version>
 # <swiftbar.author>airforce1226</swiftbar.author>
-# <swiftbar.desc>BTCZ implied price (live BTC, -2x leverage) with daily EMA calibration + optional KRW position P/L</swiftbar.desc>
+# <swiftbar.desc>BTCZ implied price (Coinbase BTC @ 4PM ET, -2x) with EMA calibration, optional broker anchor + KRW P/L</swiftbar.desc>
 # <swiftbar.refreshOnOpen>true</swiftbar.refreshOnOpen>
 
 # === 본인 포지션 (선택) =====================================
-#   세 값이 모두 0보다 크면 Position / KRW 환차 손익 섹션이 표시됩니다.
-#   아래 줄을 본인 보유 정보로 수정한 뒤 SwiftBar 를 새로고침하세요.
-#   AVG_COST=3.9357 SHARES=3285 BUY_FX=1491.88 와 같이 입력.
+#   AVG_COST / SHARES / BUY_FX 세 값을 모두 0보다 크게 설정하면
+#   Position / KRW 환산 / 환차 손익 섹션이 활성화됩니다.
+# ============================================================
+# === BROKER_PRICE (선택) ====================================
+#   broker 앱에서 본 정확한 BTCZ 가격을 입력하면, 그 가격에
+#   anchor 되도록 calibration factor 가 자동 계산됩니다 (M 표시).
+#   None 이면 EMA 학습 factor 사용 (시간 지나면 자동 보정).
 # ============================================================
 
 /usr/bin/python3 <<'PYEOF'
 import json
 import os
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 UA = {"User-Agent": "Mozilla/5.0"}
 LEVERAGE = -2.0
@@ -25,6 +29,8 @@ MAX_HISTORY = 60
 AVG_COST = 0.0     # USD, 본인 평균단가 (예: 3.9357)
 SHARES = 0         # 보유 수량 (예: 3285)
 BUY_FX = 0.0       # 매입 시점 USD/KRW (예: 1491.88)
+BROKER_PRICE = None  # broker 가격 (예: 4.040). None 이면 EMA 학습 사용.
+
 HAS_POSITION = AVG_COST > 0 and SHARES > 0 and BUY_FX > 0
 COST_USD = AVG_COST * SHARES if HAS_POSITION else 0.0
 COST_KRW_ACTUAL = COST_USD * BUY_FX if HAS_POSITION else 0.0
@@ -74,6 +80,15 @@ def fail(msg):
 
 def btc_at(ts):
     try:
+        candles = fetch(
+            f"https://api.exchange.coinbase.com/products/BTC-USD/candles?start={ts-600}&end={ts+600}&granularity=60"
+        )
+        if candles:
+            candles.sort(key=lambda x: abs(x[0] - ts))
+            return float(candles[0][4])
+    except Exception:
+        pass
+    try:
         hist = fetch(
             f"https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?period1={ts-300}&period2={ts+300}&interval=1m"
         )
@@ -81,6 +96,14 @@ def btc_at(ts):
         return next((c for c in reversed(closes) if c is not None), None)
     except Exception:
         return None
+
+
+def etf_close_ts(market_time, gmt_offset_sec):
+    dt_utc = datetime.fromtimestamp(market_time, tz=timezone.utc)
+    tz = timezone(timedelta(seconds=gmt_offset_sec))
+    dt_local = dt_utc.astimezone(tz)
+    dt_close_local = dt_local.replace(hour=16, minute=0, second=0, microsecond=0)
+    return int(dt_close_local.astimezone(timezone.utc).timestamp())
 
 
 def fmt_krw(v):
@@ -96,6 +119,7 @@ try:
     last_price = float(meta["regularMarketPrice"])
     prev_close = float(meta["chartPreviousClose"])
     last_time = int(meta["regularMarketTime"])
+    gmt_offset = int(meta.get("gmtoffset", -14400))
     name = meta.get("longName", "BTCZ")
     day_high = meta.get("regularMarketDayHigh")
     day_low = meta.get("regularMarketDayLow")
@@ -109,8 +133,9 @@ try:
 except Exception as e:
     fail(f"BTC spot failed: {e}")
 
-btc_at_close = btc_at(last_time)
-ref_label = "ETF close-time BTC"
+close_ts = etf_close_ts(last_time, gmt_offset)
+btc_at_close = btc_at(close_ts)
+ref_label = "BTC @ 4PM ET (Coinbase)"
 if btc_at_close is None:
     try:
         stats = fetch("https://api.exchange.coinbase.com/products/BTC-USD/stats")
@@ -154,16 +179,23 @@ if today_iso not in existing_dates:
 
     save_state(state)
 
-factor = state.get("factor", 1.0)
-samples = state.get("samples", 0)
-
 btc_change = (btc_now - btc_at_close) / btc_at_close
 raw_implied = last_price * (1.0 + LEVERAGE * btc_change)
+
+if BROKER_PRICE and BROKER_PRICE > 0 and raw_implied > 0:
+    factor = float(BROKER_PRICE) / raw_implied
+    samples = -1
+    factor_source = f"manual anchor → ${BROKER_PRICE:,.4f}"
+else:
+    factor = state.get("factor", 1.0)
+    samples = state.get("samples", 0)
+    factor_source = "EMA learned"
+
 implied = raw_implied * factor
 implied_pct_vs_prev = (implied - prev_close) / prev_close * 100.0
 btc_change_pct = btc_change * 100.0
 
-cal_mark = "✓" if samples >= 5 else "·"
+cal_mark = "M" if samples < 0 else ("✓" if samples >= 5 else "·")
 
 if HAS_POSITION:
     value_usd = implied * SHARES
@@ -220,7 +252,10 @@ else:
 print("---")
 print(f"Implied (calibrated): ~${implied:,.3f}")
 print(f"Implied (raw):        ~${raw_implied:,.3f}")
-print(f"Calibration factor:   {factor:.5f}  (samples: {samples})")
+if samples < 0:
+    print(f"Calibration factor:   {factor:.5f}  ({factor_source})")
+else:
+    print(f"Calibration factor:   {factor:.5f}  ({factor_source}, samples: {samples})")
 print("---")
 print(f"Last Close: ${last_price:,.3f}  ({today_iso})")
 print(f"Prev Close: ${prev_close:,.3f}")

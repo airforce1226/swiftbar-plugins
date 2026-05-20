@@ -41,6 +41,16 @@ BUY_FX   = 1491.88  # 매입 시점 USD/KRW 환율
 ```
 세 값이 모두 0보다 크면 Position / KRW 환산 / 환차 손익 섹션이 활성화됩니다.
 
+#### Broker anchor (선택)
+ETF NAV / broker 데이터 source 와 우리 추정 사이에 systematic bias 가 있을 수 있습니다
+(보통 0.5~1% 수준). broker 앱에서 본 정확한 가격을 알면 즉시 일치시킬 수 있습니다:
+```python
+BROKER_PRICE = 4.040   # broker 가 보여주는 BTCZ 가격
+```
+- 설정하면 calibration factor 가 `BROKER_PRICE / raw_implied` 로 강제 anchor 되고,
+  메뉴바에 `M` 표시가 뜹니다.
+- `None` 으로 두면 EMA 자동 학습 (며칠 누적되면 자동으로 정확해짐, `✓` 표시).
+
 ## 요구사항
 
 - macOS
@@ -66,24 +76,27 @@ open "swiftbar://refreshallplugins"
 ## 데이터 소스
 
 - BTC spot price: Coinbase Wallet API (`api.coinbase.com/v2/prices/BTC-USD/spot`)
-- BTC 24h stats: Coinbase Exchange API (`api.exchange.coinbase.com/products/BTC-USD/stats`)
-- BTC historical: Yahoo Finance chart API
+- BTC historical (4PM ET reference): Coinbase Exchange candles (`api.exchange.coinbase.com/products/BTC-USD/candles`) — Yahoo Finance fallback
 - BTCZ ETF: Yahoo Finance chart API
 - USD/KRW: Yahoo Finance chart API
 
 ## 동작 원리 — BTCZ 추정가
 
 ```
-implied_price = ETF_last_close × (1 − 2 × BTC_change) × calibration_factor
-BTC_change    = (BTC_now − BTC_at_ETF_close) / BTC_at_ETF_close
+implied_price = ETF_last_close × (1 − 2 × BTC_change) × factor
+BTC_change    = (BTC_now − BTC_at_4PM_ET) / BTC_at_4PM_ET
 ```
 
-캘리브레이션 (매일 1회 갱신):
-```
-theoretical_today = ETF_close_yesterday × (1 − 2 × BTC_change_during_session)
-ratio             = ETF_close_today / theoretical_today
-factor            = (1 − α) × factor + α × ratio          # α = 0.25
-```
+- **BTC reference 시점**: ETF 의 NAV 계산 기준인 4PM ET 의 BTC 가격을 사용합니다
+  (regularMarketTime 이 아닌 정확한 4PM 로 강제 변환 → broker NAV 와 시점 정합성 확보).
+- **factor** 결정:
+  - `BROKER_PRICE` 설정 시: `BROKER_PRICE / raw_implied` (강제 anchor)
+  - 그 외: 매일 1회 EMA 학습으로 누적
+    ```
+    theoretical_today = ETF_close_yesterday × (1 − 2 × BTC_change_during_session)
+    ratio             = ETF_close_today / theoretical_today
+    factor            = (1 − α) × factor + α × ratio          # α = 0.25
+    ```
 
 ## Disclaimer
 
